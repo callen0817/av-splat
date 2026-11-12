@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.venv_*/
+ENV/
+env.bak/
+venv.bak/
+
+# Build and Packaging
+build/
+dist/
+*.manifest
+*.spec.bak
+*.egg-info/
+*.egg
+
+# Logs and Sessions
+logs/
+*.log
+
+# Large 3D Point Clouds, Models, and Checkpoints
+*.e57
+*.ifc
+*.ply
+*.pcd
+*.las
+*.laz
+*.rcs
+*.rcp
+*.pts
+*.xyz
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.safetensors
+
+# Testing artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+_AI/

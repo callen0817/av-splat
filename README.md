@@ -87,7 +87,7 @@ python -m PyInstaller --noconfirm AV_Splat.spec
 
 See [measured baseline](benchmarks/results.json) and [implementation status](docs/MODERNIZATION.md). The small synthetic benchmark records processing time and actual output sizes; no speedup over a nonexistent prior engine is claimed. Windows packaging, real-image reconstruction quality, physical GPU performance, rendering FPS and independent viewer interoperability remain unverified.
 
-The interface uses the AV Scan/scanAR glass palette and layout patterns. Original logo artwork is loaded from `logos/av_splat.png` and included by the packaging recipe when supplied. The inline chat logo is visible but not exposed as a downloadable workspace asset; exact-file integration remains pending. No replacement logo is generated. Third-party licences and pinned codec/backend sources are documented in [licenses/README.md](licenses/README.md).
+The interface uses the AV Scan/scanAR glass palette and layout patterns. The supplied original black-and-gold logo is loaded from `logos/av_splat.png` for the splash screen and application icon and included by the packaging recipe. Its original image bytes are preserved. Third-party licences and pinned codec/backend sources are documented in [licenses/README.md](licenses/README.md).
 
 Completed import caches are read-only and versioned. Setting the same writable `AV_WORKSPACE` for AV Segment and AV Splat lets them reuse compatible imports under the shared `imports/` directory, with cross-process writer locks. Their processing jobs use separate work folders. Close applications before manually clearing a scratch cache.
 

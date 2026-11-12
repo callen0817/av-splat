@@ -22,4 +22,4 @@ Inverse conversion produces derived points, not original LiDAR returns. SPZ with
 
 The benchmark in `benchmarks/results.json` is a synthetic curved surface. There is no prior executable baseline. Native-codec roundtrips are not independent external-viewer acceptance, and synthetic held-out views are not a real-building photometric-quality benchmark. Windows deployment, ReCap consumption, hardware VRAM/FPS, real calibrated scenes and signed release packages require separate validation.
 
-The user supplied inline logo references. Matching Snap/Segment files already exist in those repositories; an exact downloadable AV Splat PNG/SVG is still needed at `logos/av_splat.png`. The asset hook and packaging route are prepared without inventing artwork.
+The supplied original AV Splat PNG is integrated at `logos/av_splat.png`, with unchanged image bytes. The splash screen and application icon load this asset, and the packaging recipe bundles it.

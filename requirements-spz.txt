@@ -1,0 +1,2 @@
+# Official Niantic codec, MIT; immutable reviewed commit (not PyPI's unrelated 0.0.1).
+spz @ git+https://github.com/nianticlabs/spz.git@855173912dee2a48cb539657f46c4ade775f48c9

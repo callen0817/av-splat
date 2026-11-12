@@ -1,0 +1,29 @@
+name: AV_Splat regression
+on: [push, pull_request]
+jobs:
+  regression:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      AV_HEADLESS: '1'
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m unittest discover -s tests -v
+      - run: python launch.py --smoke-test
+      - run: python -m PyInstaller --noconfirm AV_Splat.spec
+      - if: runner.os == 'Linux'
+        run: dist/AV_Splat/AV_Splat --smoke-test
+      - if: runner.os == 'Windows'
+        run: dist/AV_Splat/AV_Splat.exe --smoke-test

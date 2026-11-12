@@ -56,3 +56,13 @@ htmlcov/
 Thumbs.db
 Desktop.ini
 _AI/
+
+# Private generated projects and processing outputs
+*.spz
+*.splat
+*.avsplat
+*.avspz.json
+*.av.json
+*.npy
+*.npz
+*.state.json

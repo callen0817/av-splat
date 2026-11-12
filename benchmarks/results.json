@@ -1,0 +1,25 @@
+{
+  "dataset": "40,000 colored points on a synthetic curved surface",
+  "source_points": 40000,
+  "gaussians": 28223,
+  "rapid_seconds": 0.28170769100142934,
+  "source_points_per_second": 141991.15351734238,
+  "ply_bytes": 2258324,
+  "spz_bytes": 105508,
+  "ply_to_spz_ratio": 21.404291617697236,
+  "before_comparison": "unavailable: repository contained only scaffolds",
+  "real_image_quality": "unmeasured",
+  "interactive_fps": "unmeasured",
+  "gpu_training": "unrun: CUDA unavailable",
+  "splat_to_centres_seconds": 0.009146080999926198,
+  "centre_points": 28223,
+  "covariance_sample_seconds": 0.048842322001291905,
+  "sampled_points": 112892,
+  "resources": {
+    "sampled_peak_process_rss_bytes": 89735168,
+    "initial_process_rss_bytes": 68857856,
+    "rss_sample_interval_seconds": 0.02,
+    "monitored_seconds": 0.3843657469988102,
+    "gpu_memory": "unmeasured"
+  }
+}

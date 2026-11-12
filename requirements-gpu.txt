@@ -1,0 +1,4 @@
+# Optional CUDA backend, separately capability-tested; no weights are downloaded.
+-r requirements.txt
+torch>=2.6,<3
+gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@512d366b67073d77ca099ede742683c165dfc23b

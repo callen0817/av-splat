@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import numpy as np
-from av_common.data import check_cancel,verify_source,atomic_json
+from av_common.data import check_cancel,verify_source
 
 PLY_TYPES={'f8':'double','f4':'float','u1':'uchar','i1':'char','u2':'ushort','i2':'short','u4':'uint','i4':'int'}
 
@@ -19,7 +19,8 @@ def write_ply(path,fields,cancel=lambda:False):
         code=dt.kind+str(dt.itemsize)
         if code not in PLY_TYPES: raise ValueError(f'PLY scalar type {dt} is not supported for {name}.')
         dtype.append((name,'<'+code))
-    path=Path(path).resolve(); fd,temp=tempfile.mkstemp(prefix='.av-',suffix='.ply',dir=path.parent)
+    path=Path(path).resolve(); path.parent.mkdir(parents=True,exist_ok=True)
+    fd,temp=tempfile.mkstemp(prefix='.av-',suffix='.ply',dir=path.parent)
     try:
         with os.fdopen(fd,'wb') as stream:
             header=['ply','format binary_little_endian 1.0','comment Artificial Vision derivative; retain original survey data',f'element vertex {n}']
@@ -30,13 +31,17 @@ def write_ply(path,fields,cancel=lambda:False):
                 for name,values in fields.items(): block[name]=values[start:end]
                 stream.write(block.tobytes())
         check=PlyData.read(temp,mmap='r')['vertex'].data
-        if len(check)!=n: raise RuntimeError('PLY export vertex count changed.')
-        for start in range(0,n,100_000):
-            check_cancel(cancel); end=min(start+100_000,n)
-            for name,values in fields.items():
-                if not np.array_equal(check[name][start:end],values[start:end],equal_nan=True):
-                    raise RuntimeError(f'PLY field {name} failed export validation.')
-        del check
+        try:
+            if len(check)!=n: raise RuntimeError('PLY export vertex count changed.')
+            for start in range(0,n,100_000):
+                check_cancel(cancel); end=min(start+100_000,n)
+                for name,values in fields.items():
+                    if not np.array_equal(check[name][start:end],values[start:end],equal_nan=True):
+                        raise RuntimeError(f'PLY field {name} failed export validation.')
+        finally:
+            mm=getattr(check,'_mmap',None)
+            del check
+            if mm is not None: mm.close()
         os.replace(temp,path)
     finally:
         if os.path.exists(temp): os.unlink(temp)
@@ -53,6 +58,6 @@ def cloud_fields(data):
 
 def protect_source(data,path):
     verify_source(data)
-    source=data.metadata.get('source',{}).get('path')
+    source=(data.metadata.get('source') or {}).get('path')
     if source and (Path(source).resolve()==Path(path).resolve() or (Path(path).exists() and os.path.samefile(source,path))):
         raise ValueError('Export must use a new path; original measurements are preserved.')

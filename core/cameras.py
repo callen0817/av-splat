@@ -18,7 +18,7 @@ class Camera:
     def validate(self):
         if self.K.shape!=(3,3) or self.world_to_camera.shape!=(4,4) or not np.isfinite(self.K).all() or not np.isfinite(self.world_to_camera).all():
             raise ValueError('Camera matrices must be finite 3 × 3 K and 4 × 4 world_to_camera.')
-        if self.K[0,0]<=0 or self.K[1,1]<=0 or not np.allclose(self.K[2],[0,0,1]) or not np.allclose(self.world_to_camera[3],[0,0,0,1]):
+        if self.K[0,0]<=0 or self.K[1,1]<=0 or not np.isclose(self.K[1,0],0,atol=1e-9) or not np.allclose(self.K[2],[0,0,1]) or not np.allclose(self.world_to_camera[3],[0,0,0,1]):
             raise ValueError('Invalid pinhole intrinsics or camera transform.')
         rotation=self.world_to_camera[:3,:3]
         if not np.allclose(rotation.T@rotation,np.eye(3),atol=1e-5) or not np.isclose(np.linalg.det(rotation),1,atol=1e-5):
@@ -29,7 +29,8 @@ class Camera:
 
 
 def load_cameras(path,max_side=256):
-    path=Path(path).resolve(); manifest=json.loads(path.read_text())
+    path=Path(path).resolve(); base=path.parent
+    manifest=json.loads(path.read_text(encoding='utf-8'))
     if manifest.get('schema_version')!=1 or manifest.get('convention')!='opencv_world_to_camera' or manifest.get('units')!='metres':
         raise ValueError('Calibration requires schema_version 1, convention opencv_world_to_camera and units metres.')
     if not 16<=max_side<=4096: raise ValueError('Image-side budget must be 16–4096 pixels.')
@@ -37,7 +38,10 @@ def load_cameras(path,max_side=256):
     cameras=[]; stamps=[]; decoded_bytes=0
     for record in manifest.get('cameras',[]):
         if any(float(value)!=0 for value in record.get('distortion',[])): raise ValueError('Undistort and recalibrate images before pinhole reconstruction.')
-        image_path=(path.parent/record['image']).resolve()
+        raw_image=Path(record['image'])
+        if raw_image.is_absolute(): raise ValueError('Camera manifest image paths must be relative to the manifest directory.')
+        image_path=(base/raw_image).resolve()
+        if not image_path.is_relative_to(base): raise ValueError('Camera manifest image paths must not escape the manifest directory.')
         with Image.open(image_path) as opened:
             image=opened.convert('RGB'); old_width,old_height=image.size
             scale=min(1,max_side/max(image.size))

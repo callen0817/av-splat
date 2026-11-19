@@ -12,10 +12,13 @@ SH_C0=.28209479177387814
 
 
 def protect(scene,path):
-    source=scene.metadata.get('source',{}).get('source',{})
-    if source and fingerprint(source['path'])!=source: raise ValueError('Original source changed; regenerate or restore against the original data.')
-    if source and (Path(source['path']).resolve()==Path(path).resolve() or (Path(path).exists() and os.path.samefile(source['path'],path))):
-        raise ValueError('Do not overwrite original survey data.')
+    source=(scene.metadata.get('source') or {}).get('source') or {}
+    if source and source.get('path'):
+        try: current=fingerprint(source['path'])
+        except OSError as error: raise ValueError('Original source file is missing; cannot verify provenance against original data.') from error
+        if current!=source: raise ValueError('Original source changed; regenerate or restore against the original data.')
+        if Path(source['path']).resolve()==Path(path).resolve() or (Path(path).exists() and os.path.samefile(source['path'],path)):
+            raise ValueError('Do not overwrite original survey data.')
 
 
 def export_ply(path,scene,cancel=lambda:False):
@@ -42,21 +45,27 @@ def read_ply(path):
     if not all(k in fields.dtype.names for k in required): raise ValueError('Not a degree-zero Gaussian PLY.')
     means=np.column_stack([fields[k] for k in ['x','y','z']])
     colors=np.clip(np.column_stack([fields[f'f_dc_{i}'] for i in range(3)])*SH_C0+.5,0,1)
-    scales=np.column_stack([fields[f'scale_{i}'] for i in range(3)])
-    q=np.column_stack([fields[f'rot_{i}'] for i in range(4)])
+    scales=np.clip(np.column_stack([fields[f'scale_{i}'] for i in range(3)]).astype('float32'),-20,10)
+    q=np.column_stack([fields[f'rot_{i}'] for i in range(4)]).astype('float64')
+    if not np.isfinite(q).all(): raise ValueError('Gaussian PLY contains non-finite rotations.')
+    norms=np.linalg.norm(q,axis=1)
+    if np.any(norms<=1e-12): raise ValueError('Gaussian PLY contains zero-norm quaternions.')
+    q=(q/norms[:,None]).astype('float32')
+    opacity=np.clip(np.asarray(fields['opacity'],dtype='float32'),-30,30)
     from formats.import_splats import _sidecar
     report=_sidecar(path)
     rest=[name for name in fields.dtype.names if name.startswith('f_rest_')]
     if len(rest) not in {0,9,24,45,72}: raise ValueError('Invalid spherical-harmonic coefficient count in Gaussian PLY.')
     degree=int(round(np.sqrt(len(rest)/3+1)-1)) if rest else 0
-    metadata={'schema_version':1,'mode':'imported Gaussian PLY','source':{'source':fingerprint(path),'format':'Gaussian PLY'},'source_file':str(Path(path).resolve()),'source_sh_degree':degree,'crs':report.get('source',{}).get('crs'),'coordinate_frame':'source Gaussian PLY coordinates','warnings':['Point conversion uses direction-neutral DC RGB; higher-order view-dependent appearance is not recovered as measured point colors.']}
-    return GaussianScene(means,colors,scales,q,np.asarray(fields['opacity']),metadata).validate()
+    metadata={'schema_version':1,'mode':'imported Gaussian PLY','source':{'source':fingerprint(path),'format':'Gaussian PLY'},'source_file':str(Path(path).resolve()),'source_sh_degree':degree,'crs':(report.get('source') or {}).get('crs'),'coordinate_frame':'source Gaussian PLY coordinates','warnings':['Point conversion uses direction-neutral DC RGB; higher-order view-dependent appearance is not recovered as measured point colors.']}
+    return GaussianScene(means,colors,scales,q,opacity,metadata).validate()
 
 
 def save_project(path,scene,cancel=lambda:False):
     scene.validate(); protect(scene,path)
     if scene.metadata.get('source_sh_degree',0)>0: raise ValueError('This project format currently retains degree-zero appearance only; use explicit point conversion for higher-order input.')
-    path=Path(path); fd,temp=tempfile.mkstemp(prefix='.av-splat-',suffix='.avsplat',dir=path.resolve().parent); os.close(fd)
+    path=Path(path).resolve(); path.parent.mkdir(parents=True,exist_ok=True)
+    fd,temp=tempfile.mkstemp(prefix='.av-splat-',suffix='.avsplat',dir=path.parent); os.close(fd)
     try:
         check_cancel(cancel)
         with open(temp,'wb') as stream:

@@ -8,11 +8,18 @@ for dependency in ['PySide6','PySide6_Essentials','PySide6_Addons','shiboken6']:
     datas += copy_metadata(dependency)
 binaries=[]
 hiddenimports=collect_submodules('av_common') + collect_submodules('core') + collect_submodules('gui') + collect_submodules('formats') + collect_submodules('batch')
-for package in ['pye57','pyqtgraph','OpenGL','spz']:
+for package in ['pye57','pyqtgraph','OpenGL']:
     data, binary, hidden = collect_all(package, filter_submodules=lambda name: not any(part in name.split(".") for part in ["examples", "tests", "ml"]))
     datas += data
     binaries += binary
     hiddenimports += hidden
+try:
+    data, binary, hidden = collect_all('spz', filter_submodules=lambda name: not any(part in name.split(".") for part in ["examples", "tests", "ml"]))
+    datas += data
+    binaries += binary
+    hiddenimports += hidden
+except Exception:
+    pass
 
 a=Analysis(['launch.py'],pathex=['.'],binaries=binaries,datas=datas,hiddenimports=hiddenimports,
     excludes=['torch','tensorflow','tensorboard','bpy','PyQt5','PyQt6','pytest','IPython','jupyterlab','notebook'],noarchive=False)

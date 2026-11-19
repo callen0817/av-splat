@@ -1,6 +1,7 @@
 """Shared AV Suite Qt shell with responsive jobs and bounded OpenGL previews."""
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import numpy as np
@@ -11,11 +12,12 @@ from av_common.theme import STYLE,icon
 
 
 class Job(QThread):
-    progress=Signal(str); completed=Signal(object); error=Signal(str)
+    progress=Signal(str); completed=Signal(object); cancelled=Signal(str); error=Signal(str)
     def __init__(self,operation,parent=None):
         super().__init__(parent); self.operation=operation; self.stop=threading.Event()
     def run(self):
         try: result=self.operation(self.stop.is_set,self.progress.emit); self.completed.emit(result)
+        except InterruptedError as error: self.cancelled.emit(str(error))
         except Exception as error: self.error.emit(str(error))
     def cancel(self): self.stop.set()
 
@@ -33,7 +35,7 @@ def card(title):
 
 class Viewer(QWidget):
     def __init__(self):
-        super().__init__(); self.gl=None; self.item=None; self.points=None; self.colors=None
+        super().__init__(); self.gl=None; self.item=None; self.points=None; self.colors=None; self._camera_initialized=False
         box=QVBoxLayout(self); box.setContentsMargins(0,0,0,0)
         tools=QHBoxLayout(); self.camera=QComboBox(); self.camera.addItems(['Perspective','Top','Front','Side'])
         self.section=QComboBox(); self.section.addItems(['No section','Lower half X','Lower half Y','Lower half Z'])
@@ -41,7 +43,10 @@ class Viewer(QWidget):
         for widget in [self.camera,self.section,self.visible]: tools.addWidget(widget)
         box.addLayout(tools)
         self.hint=text('Import a point cloud to begin.\nOriginal survey geometry remains authoritative.','muted'); self.hint.setAlignment(Qt.AlignCenter); box.addWidget(self.hint,1)
-        self.box=box; self.camera.currentIndexChanged.connect(self.render); self.section.currentIndexChanged.connect(self.render); self.visible.toggled.connect(self.render)
+        self.box=box
+        self.camera.currentIndexChanged.connect(lambda *_: self.render(reset_camera=True))
+        self.section.currentIndexChanged.connect(lambda *_: self.render(reset_camera=False))
+        self.visible.toggled.connect(lambda *_: self.render(reset_camera=False))
 
     def set_data(self,points,colors):
         self.points=np.asarray(points); self.colors=np.asarray(colors)
@@ -49,9 +54,9 @@ class Viewer(QWidget):
         if self.gl is None and os.environ.get('AV_HEADLESS')!='1':
             import pyqtgraph.opengl as gl
             self.module=gl; self.gl=gl.GLViewWidget(); self.gl.setBackgroundColor('#171a21'); self.box.addWidget(self.gl,1); self.hint.hide()
-        self.render()
+        self.render(reset_camera=not self._camera_initialized)
 
-    def render(self,*args):
+    def render(self,*args,reset_camera=False):
         if self.points is None: return
         if self.gl is None:
             self.hint.setText(f'{len(self.points):,} preview points loaded. Headless mode: a desktop/OpenGL display is required for 3D rendering.'); return
@@ -61,17 +66,23 @@ class Viewer(QWidget):
         mask=np.ones(len(self.points),bool)
         if self.section.currentIndex():
             axis=self.section.currentIndex()-1; mask=self.points[:,axis]<=center[axis]
+        if not mask.any(): return
         colors=self.colors[mask]
         if colors.shape[1]==3: colors=np.column_stack([colors,np.ones(len(colors))])
         self.item=self.module.GLScatterPlotItem(pos=self.points[mask]-center,color=colors,size=2,pxMode=True)
         self.item.setGLOptions('translucent'); self.gl.addItem(self.item)
-        elevation,azimuth=[(30,45),(90,0),(0,0),(0,90)][self.camera.currentIndex()]
-        self.gl.setCameraPosition(distance=max(float(np.ptp(self.points,axis=0).max())*1.6,1),elevation=elevation,azimuth=azimuth)
+        if reset_camera or not self._camera_initialized:
+            elevation,azimuth=[(30,45),(90,0),(0,0),(0,90)][self.camera.currentIndex()]
+            self.gl.setCameraPosition(distance=max(float(np.ptp(self.points,axis=0).max())*1.6,1),elevation=elevation,azimuth=azimuth)
+            self._camera_initialized=True
 
 
 class Studio(QMainWindow):
     def __init__(self,product,subtitle):
         super().__init__(); self.product=product; self.data=None; self.result=None; self.job=None; self.busy=False; self.closing=False
+        self._scratch_folders=[]
+        import psutil
+        self._process=psutil.Process()
         self.setWindowTitle(product+' — Artificial Vision '+subtitle); self.setWindowIcon(icon()); self.setStyleSheet(STYLE)
         self.resize(1440,920); self.setMinimumSize(1040,680)
         self.workspace=Path(os.environ.get('AV_WORKSPACE',Path(tempfile.gettempdir())/('av-'+product.lower().replace(' ','-'))))
@@ -104,17 +115,31 @@ class Studio(QMainWindow):
         self.actions.append(button); return button
 
     def fresh_folder(self,prefix='job-'):
-        return Path(tempfile.mkdtemp(prefix=prefix,dir=self.workspace))
+        folder=Path(tempfile.mkdtemp(prefix=prefix,dir=self.workspace))
+        self._scratch_folders.append(folder)
+        return folder
+
+    def cleanup_scratch(self):
+        remaining=[]
+        for folder in self._scratch_folders:
+            try:
+                if folder.exists(): shutil.rmtree(folder)
+            except OSError:
+                remaining.append(folder)
+        self._scratch_folders=remaining
 
     def run_job(self,operation,completed):
         if self.busy: return
         if self.job is not None and not self.job.isRunning(): self.job.deleteLater()
         self.busy=True; self.progress.setRange(0,0); self.cancel_button.setEnabled(True); self.refresh_actions()
-        self.job=Job(operation,self); self.job.progress.connect(self.log.append); self.job.completed.connect(completed); self.job.error.connect(self.failed); self.job.finished.connect(self.stopped); self.job.start()
+        self.job=Job(operation,self); self.job.progress.connect(self.log.append); self.job.completed.connect(completed); self.job.cancelled.connect(self.job_cancelled); self.job.error.connect(self.failed); self.job.finished.connect(self.stopped); self.job.start()
+
+    def job_cancelled(self,message):
+        self.log.append(message)
 
     def failed(self,message):
         self.log.append('ERROR: '+message)
-        if 'cancel' not in message.lower() and not self.closing: QMessageBox.critical(self,'Processing error',message)
+        if not self.closing: QMessageBox.critical(self,'Processing error',message)
 
     def stopped(self):
         if self.job is not None: self.job.operation=None
@@ -139,7 +164,10 @@ class Studio(QMainWindow):
 
     def accept_data(self,data):
         self.data=data; self.result=None; self.units.setChecked(False)
-        self.source_label.setText(f"{Path(data.metadata.get('source',{}).get('path','Dataset')).name}\n{len(data.points):,} original points\n{data.metadata.get('units','Confirm units')}\nCRS: {'present' if data.metadata.get('crs') else 'not supplied'}")
+        self.cleanup_scratch()
+        self.viewer._camera_initialized=False
+        source_path=(data.metadata.get('source') or {}).get('path','Dataset')
+        self.source_label.setText(f"{Path(source_path).name}\n{len(data.points):,} original points\n{data.metadata.get('units','Confirm units')}\nCRS: {'present' if data.metadata.get('crs') else 'not supplied'}")
         self.metrics.setText(f'{len(data.points):,} source points imported. Confirm units before geometric processing.')
         self.update_view(); self.refresh_actions()
 
@@ -153,10 +181,12 @@ class Studio(QMainWindow):
     def export(self): pass
 
     def update_telemetry(self):
-        import psutil
-        process=psutil.Process()
-        self.statusBar().showMessage(f'Local CPU processing  ·  RSS {process.memory_info().rss/1024**2:.0f} MiB  ·  Preview ≤100k points')
+        self.statusBar().showMessage(f'Local CPU processing  ·  RSS {self._process.memory_info().rss/1024**2:.0f} MiB  ·  Preview ≤100k points')
 
     def closeEvent(self,event):
         if self.job and self.job.isRunning(): self.closing=True; self.cancel(); event.ignore()
-        else: self.telemetry.stop(); event.accept()
+        else:
+            self.telemetry.stop()
+            self.data=None; self.result=None
+            self.cleanup_scratch()
+            event.accept()

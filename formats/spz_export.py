@@ -31,7 +31,8 @@ def export_spz(path,scene,cancel=lambda:False,source_axes='RFU',version=3):
     cloud.rotations=scene.quaternions[:,[1,2,3,0]].astype('float32').ravel()
     cloud.alphas=scene.opacity_logits.astype('float32'); cloud.colors=((scene.colors-.5)/SH_C0).astype('float32').ravel()
     options=spz.PackOptions(); options.version=version; options.from_coord=getattr(spz.CoordinateSystem,source_axes)
-    path=Path(path).resolve(); fd,temp=tempfile.mkstemp(prefix='.av-',suffix='.spz',dir=path.parent); os.close(fd)
+    path=Path(path).resolve(); path.parent.mkdir(parents=True,exist_ok=True)
+    fd,temp=tempfile.mkstemp(prefix='.av-',suffix='.spz',dir=path.parent); os.close(fd)
     try:
         check_cancel(cancel)
         if not spz.save_spz(cloud,options,temp): raise RuntimeError('Official SPZ encoder failed.')
@@ -61,21 +62,25 @@ def export_spz(path,scene,cancel=lambda:False,source_axes='RFU',version=3):
     return str(path)
 
 
-def export_tiles(directory,scene,cancel=lambda:False,source_axes='RFU',tile_size=512.):
+def export_tiles(directory,scene,cancel=lambda:False,source_axes='RFU',tile_size=512.,version=3):
     scene.validate()
     if not np.isfinite(tile_size) or not 1<=tile_size<=1024: raise ValueError('SPZ tile size must be 1–1024 metres.')
     destination=Path(directory).resolve()
     if destination.exists(): raise ValueError('Choose a new tile directory; existing projects are never replaced.')
+    destination.parent.mkdir(parents=True,exist_ok=True)
     temporary=Path(tempfile.mkdtemp(prefix='.av-tiles-',dir=destination.parent))
     try:
-        keys=np.floor(scene.means/tile_size).astype('int64'); unique,inverse=np.unique(keys,axis=0,return_inverse=True)
+        keys=np.floor(scene.means/tile_size).astype('int64')
+        unique,inverse,counts=np.unique(keys,axis=0,return_inverse=True,return_counts=True)
+        order=np.argsort(inverse,kind='mergesort')
+        splits=np.split(order,np.cumsum(counts)[:-1])
         tiles=[]
-        for i,key in enumerate(unique):
-            check_cancel(cancel); mask=inverse==i
-            tile=GaussianScene(scene.means[mask],scene.colors[mask],scene.log_scales[mask],scene.quaternions[mask],scene.opacity_logits[mask],scene.metadata)
-            name=f'tile_{i:06d}.spz'; export_spz(temporary/name,tile,cancel,source_axes)
-            tiles.append({'file':name,'gaussians':int(mask.sum()),'minimum_source':tile.means.min(0).tolist(),'maximum_source':tile.means.max(0).tolist(),'metadata':name+'.av.json'})
-        atomic_json(temporary/'manifest.avspz.json',{'schema_version':1,'source_axes':source_axes,'tile_size_m':tile_size,'gaussians':len(scene.means),'tiles':tiles,'source':scene.metadata.get('source')})
+        for i,indices in enumerate(splits):
+            check_cancel(cancel)
+            tile=GaussianScene(scene.means[indices],scene.colors[indices],scene.log_scales[indices],scene.quaternions[indices],scene.opacity_logits[indices],scene.metadata)
+            name=f'tile_{i:06d}.spz'; export_spz(temporary/name,tile,cancel,source_axes,version=version)
+            tiles.append({'file':name,'gaussians':int(len(indices)),'minimum_source':tile.means.min(0).tolist(),'maximum_source':tile.means.max(0).tolist(),'metadata':name+'.av.json'})
+        atomic_json(temporary/'manifest.avspz.json',{'schema_version':1,'source_axes':source_axes,'tile_size_m':tile_size,'spz_version':version,'gaussians':len(scene.means),'tiles':tiles,'source':scene.metadata.get('source')})
         check_cancel(cancel); os.replace(temporary,destination)
     finally:
         if temporary.exists(): shutil.rmtree(temporary)

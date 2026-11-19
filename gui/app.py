@@ -1,3 +1,5 @@
+from pathlib import Path
+import re
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage,QPixmap
@@ -10,6 +12,12 @@ from core.appearance import optimize,AppearanceConfig,render
 from core.gpu import train,GpuConfig
 from formats.gaussian import export_ply,save_project,load_project,read_ply
 from formats.spz_export import export_spz,export_tiles,available
+
+
+def _apply_filter_extension(path,selected_filter):
+    if not path or Path(path).suffix: return path
+    match=re.search(r'\*(\.[A-Za-z0-9]+)',selected_filter or '')
+    return path+match.group(1) if match else path
 
 
 class SplatStudio(Studio):
@@ -32,6 +40,7 @@ class SplatStudio(Studio):
         self.calibration_button=self.button('Choose camera manifest…',self.choose_calibration); self.right.addWidget(self.calibration); self.right.addWidget(self.calibration_button)
         self.backend=QComboBox(); self.backend.addItems(['CPU reference · small scenes','CUDA / gsplat · optional GPU'])
         self.right.addWidget(self.backend); self.iterations=QSpinBox(); self.iterations.setRange(1,5000); self.iterations.setValue(50)
+        self.backend.currentIndexChanged.connect(lambda index: self.iterations.setMaximum(5000 if index==0 else 100_000))
         self.right.addWidget(text('Optimization iterations','muted')); self.right.addWidget(self.iterations)
         self.checkpoint=QLineEdit(str(self.workspace/'appearance.npz')); self.right.addWidget(text('Checkpoint path','muted')); self.right.addWidget(self.checkpoint)
         self.resume=QCheckBox('Resume matching checkpoint'); self.right.addWidget(self.resume)
@@ -85,7 +94,6 @@ class SplatStudio(Studio):
         manifest=self.calibration.text().strip(); checkpoint=self.checkpoint.text().strip()
         if not manifest or not checkpoint:
             QMessageBox.warning(self,'Calibration required','Choose a calibrated camera manifest and checkpoint path.'); return
-        from pathlib import Path
         if Path(checkpoint).resolve()==Path(manifest).resolve():
             QMessageBox.warning(self,'Invalid checkpoint','The checkpoint must not overwrite the camera manifest.'); return
         scene=self.result; backend=self.backend.currentIndex(); iterations=self.iterations.value(); resume=self.resume.isChecked()
@@ -112,7 +120,8 @@ class SplatStudio(Studio):
 
     def save_project(self):
         if self.result is None or self.busy: return
-        path,_=QFileDialog.getSaveFileName(self,'Save Gaussian project','','AV Splat project (*.avsplat)')
+        path,selected_filter=QFileDialog.getSaveFileName(self,'Save Gaussian project','','AV Splat project (*.avsplat)')
+        path=_apply_filter_extension(path,selected_filter)
         if path:
             scene=self.result
             self.run_job(lambda cancel,progress:save_project(path,scene,cancel),lambda _:self.log.append('Gaussian project saved: '+path))
@@ -129,7 +138,8 @@ class SplatStudio(Studio):
 
     def export(self):
         if self.result is None or self.busy: return
-        path,_=QFileDialog.getSaveFileName(self,'Export Gaussian visualization derivative','','Gaussian PLY (*.ply);;SPZ v3 (*.spz)')
+        path,selected_filter=QFileDialog.getSaveFileName(self,'Export Gaussian visualization derivative','','Gaussian PLY (*.ply);;SPZ v3 (*.spz)')
+        path=_apply_filter_extension(path,selected_filter)
         if path:
             scene=self.result; axes=self.axes.currentText().split(' ')[0]
             self.run_job(lambda cancel,progress:export_spz(path,scene,cancel,axes) if path.lower().endswith('.spz') else export_ply(path,scene,cancel),lambda value:self.log.append('Validated Gaussian export: '+value))

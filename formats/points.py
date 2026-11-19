@@ -12,6 +12,7 @@ def export_points(path,data,cancel=lambda:False,las_scale=.0001):
     if ext=='.ply':
         fields=cloud_fields(data); fields['av_derived']=np.broadcast_to(np.uint8(1),(len(data.points),)); write_ply(path,fields,cancel)
     elif ext in {'.las','.laz','.xyz'}:
+        path.parent.mkdir(parents=True,exist_ok=True)
         fd,temp=tempfile.mkstemp(prefix='.av-points-',suffix=ext,dir=path.parent); os.close(fd)
         try:
             if ext=='.xyz':

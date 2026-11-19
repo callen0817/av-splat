@@ -72,7 +72,7 @@ class ConversionStudio(SplatStudio):
         super().accept_data(data)
 
     def accept_gaussian_input(self,scene):
-        source=scene.metadata.get('source',{}).get('source') or {'path':'Gaussian scene'}
+        source=(scene.metadata.get('source') or {}).get('source') or {'path':'Gaussian scene'}
         data=Dataset(scene.means,scene.colors,metadata={'source':source,'units':'Gaussian file units; verify metres','crs':scene.metadata.get('crs')})
         self.accept_data(data); self.gaussian_input=scene; self.result=scene; self.direction.setCurrentIndex(1)
         self.source_label.setText(f'{Path(source["path"]).name}\n{len(scene.means):,} input Gaussians\n{scene.metadata.get("coordinate_frame","Gaussian source coordinates")}')
@@ -114,13 +114,16 @@ class ConversionStudio(SplatStudio):
 
     def export(self):
         if self.busy: return
+        from gui.app import _apply_filter_extension
         if self.direction.currentIndex()==1:
             if self.point_result is None: return
-            path,_=QFileDialog.getSaveFileName(self,'Export derived points','','Point PLY (*.ply);;LAS (*.las);;LAZ (*.laz);;XYZ coordinates (*.xyz)')
+            path,selected_filter=QFileDialog.getSaveFileName(self,'Export derived points','','Point PLY (*.ply);;LAS (*.las);;LAZ (*.laz);;XYZ coordinates (*.xyz)')
+            path=_apply_filter_extension(path,selected_filter)
             if path:
                 data=self.point_result; self.run_job(lambda cancel,progress:export_points(path,data,cancel),lambda value:self.log.append('Validated derived-point export: '+value))
         elif self.result is not None:
-            path,_=QFileDialog.getSaveFileName(self,'Export Gaussian splats','','Gaussian PLY (*.ply);;SPZ v3 (*.spz);;Legacy web splat (*.splat)')
+            path,selected_filter=QFileDialog.getSaveFileName(self,'Export Gaussian splats','','Gaussian PLY (*.ply);;SPZ v3 (*.spz);;Legacy web splat (*.splat)')
+            path=_apply_filter_extension(path,selected_filter)
             if path:
                 scene=self.result; axes=self.axes.currentText().split(' ')[0]
                 def operation(cancel,progress):

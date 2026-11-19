@@ -100,6 +100,7 @@ def optimize(scene,cameras,identity,checkpoint,config=None,cancel=lambda:False,p
             if str(state['identity'])!=identity or state['colors'].shape!=scene.colors.shape: raise ValueError('Checkpoint calibration or geometry differs.')
             if str(state['config'])!=json.dumps(asdict(config)): raise ValueError('Checkpoint optimization settings differ.')
             result.colors=np.array(state['colors']); result.opacity_logits=np.array(state['opacity_logits']); start=int(state['iteration']); history=state['history'].tolist(); baseline=float(state['initial_holdout']) if 'initial_holdout' in state else None
+        result.validate()
     # Reserve the last camera as an untouched held-out view for reporting.
     training=cameras[:-1]
     initial_holdout=baseline if baseline is not None else float(np.mean((render(result,cameras[-1],cancel)[0]-cameras[-1].image)**2))

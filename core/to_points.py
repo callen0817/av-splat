@@ -48,10 +48,11 @@ def splat_to_points(scene,folder,config=None,cancel=lambda:False,progress=lambda
         ids[offset:end]=repeated.astype('uint32'); alphas[offset:end]=opacity[repeated]
         offset=end; progress(f'Extracted {offset:,} / {count:,} derived points')
     for array in [points,colors,ids,alphas]: array.flush()
-    source=scene.metadata.get('source',{}).get('source')
+    source_meta=scene.metadata.get('source') or {}
+    source=source_meta.get('source')
     metadata={'schema_version':1,'derivation':'Gaussian centres' if config.method=='centres' else 'synthetic samples inside anisotropic Gaussian covariance, truncated at 3 sigma',
               'not_original_survey':True,'config':asdict(config),'source':source,'gaussian_source_metadata':scene.metadata,'count':count,
-              'units':'input coordinate units; metres only when verified','crs':scene.metadata.get('crs') or scene.metadata.get('source',{}).get('crs'),
+              'units':'input coordinate units; metres only when verified','crs':scene.metadata.get('crs') or source_meta.get('crs'),
               'coordinate_frame':scene.metadata.get('coordinate_frame','source Gaussian coordinate frame'),
               'warnings':['This conversion cannot recover original LiDAR points, intensity, scan stations or survey accuracy. Colors use direction-neutral DC RGB.']}
     return Dataset(points,colors,{'gaussian_id':ids,'gaussian_opacity':alphas},metadata).validate()

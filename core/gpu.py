@@ -26,6 +26,13 @@ class GpuConfig:
     checkpoint_every: int=25
     max_image_side: int=1024
 
+    def validate(self):
+        if not 1<=self.iterations<=100_000 or not np.isfinite(self.learning_rate) or not 0<self.learning_rate<=.1:
+            raise ValueError('Invalid GPU iteration budget or learning rate.')
+        if self.checkpoint_every<1 or self.max_image_side<=0:
+            raise ValueError('Invalid GPU checkpoint cadence or max_image_side budget.')
+        return self
+
 
 def train(scene,cameras,identity,checkpoint,config=None,cancel=lambda:False,progress=lambda message:None,resume=False):
     state=capabilities()
@@ -36,8 +43,8 @@ def train(scene,cameras,identity,checkpoint,config=None,cancel=lambda:False,prog
     from formats.gaussian import protect
     protect(scene,checkpoint)
     if any(Path(checkpoint).resolve()==Path(c.image_path).resolve() for c in cameras): raise ValueError('Checkpoint must not overwrite an input image.')
-    scene.validate(); config=config or GpuConfig()
-    if len(cameras)<2 or not 1<=config.iterations<=100_000 or not 0<config.learning_rate<=.1 or config.checkpoint_every<1: raise ValueError('Invalid GPU training budget or calibration.')
+    scene.validate(); config=(config or GpuConfig()).validate()
+    if len(cameras)<2: raise ValueError('At least two calibrated views are required.')
     for camera in cameras:
         camera.validate()
         if max(camera.image.shape[:2])>config.max_image_side: raise MemoryError('Resize calibrated images within the configured GPU budget.')
@@ -80,6 +87,7 @@ def train(scene,cameras,identity,checkpoint,config=None,cancel=lambda:False,prog
     with torch.no_grad():
         heldout=float(torch.mean((predict(cameras[-1])-torch.tensor(cameras[-1].image,device='cuda',dtype=torch.float32))**2).cpu())
         colors=torch.sigmoid(params[0]).cpu().numpy(); logits=params[1].cpu().numpy(); scales=params[2].cpu().numpy(); quats=torch.nn.functional.normalize(params[3],dim=1).cpu().numpy()
+        quats[quats[:,0]<0]*=-1
     from core.cameras import verify_camera_sources
     verify_camera_sources(cameras)
     metadata={**scene.metadata,'mode':'CUDA calibrated gsplat','optimized_with_images':True,'geometry_positions_fixed':True,'gpu_training':{'config':asdict(config),'history':history,'heldout_mse':heldout,'device':state['device'],'torch_peak_allocated_bytes':torch.cuda.max_memory_allocated(),'checkpoint':str(Path(checkpoint).resolve())}}

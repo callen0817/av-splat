@@ -26,7 +26,7 @@ def _sidecar(path):
     sidecar=Path(str(path)+'.av.json')
     if not sidecar.exists(): return {}
     if sidecar.stat().st_size>16*1024**2: raise ValueError('Splat sidecar exceeds the metadata budget.')
-    return json.loads(sidecar.read_text())
+    return json.loads(sidecar.read_text(encoding='utf-8'))
 
 
 def read_spz(path,restore_origin=True):
@@ -58,7 +58,7 @@ def read_spz(path,restore_origin=True):
     if origin.shape!=(3,) or not np.isfinite(origin).all(): raise ValueError('Invalid SPZ origin metadata.')
     means+=origin
     metadata={'schema_version':1,'mode':'imported SPZ','source':{'source':fingerprint(path),'format':'Gaussian SPZ'},'source_axes':axes,'coordinate_frame':'restored source coordinates' if report and restore_origin else 'SPZ local RUB coordinates',
-              'restored_origin':origin.tolist(),'source_sh_degree':int(cloud.sh_degree),'spz_version':version,'crs':report.get('source',{}).get('crs') if report and restore_origin else None,
+              'restored_origin':origin.tolist(),'source_sh_degree':int(cloud.sh_degree),'spz_version':version,'crs':(report.get('source') or {}).get('crs') if report and restore_origin else None,
               'warnings':['Gaussian-derived data is not original survey geometry. RGB is the direction-neutral spherical-harmonic DC component.']}
     if not report: metadata['warnings'].append('No AV sidecar: original origin, units and georeferencing cannot be recovered; points remain in stored local RUB coordinates.')
     colors=np.clip(np.asarray(cloud.colors).reshape(-1,3)*SH_C0+.5,0,1)
@@ -72,15 +72,24 @@ def read_splat(path):
     if n>1_000_000: raise MemoryError('Legacy .splat import is limited to one million Gaussians per tile.')
     dtype=np.dtype([('position','<f4',(3,)),('scale','<f4',(3,)),('rgba','u1',(4,)),('rotation','u1',(4,))])
     raw=np.memmap(path,dtype=dtype,mode='r')
-    if not np.isfinite(raw['scale']).all() or np.any(raw['scale']<=0): raise ValueError('Invalid legacy Gaussian scales.')
-    q=(raw['rotation'].astype('float64')-128)/128
-    norm=np.linalg.norm(q,axis=1)
-    if np.any((norm<.25)|(norm>1.5)): raise ValueError('Invalid legacy wxyz quaternion encoding.')
-    q/=norm[:,None]
+    try:
+        if not np.isfinite(raw['scale']).all() or np.any(raw['scale']<=0): raise ValueError('Invalid legacy Gaussian scales.')
+        q=(raw['rotation'].astype('float64')-128)/128
+        norm=np.linalg.norm(q,axis=1)
+        if np.any((norm<.25)|(norm>1.5)): raise ValueError('Invalid legacy wxyz quaternion encoding.')
+        q/=norm[:,None]
+        positions=raw['position'].astype('float64')
+        colors=raw['rgba'][:,:3].astype('float32')/255
+        log_scales=np.log(raw['scale']).copy()
+        opacities=logit(np.clip(raw['rgba'][:,3].astype('float64')/255,1e-12,1-1e-12)).astype('float32')
+    finally:
+        mm=getattr(raw,'_mmap',None)
+        del raw
+        if mm is not None: mm.close()
     report=_sidecar(path); origin=np.asarray(report.get('local_origin_source_axes',[0,0,0]),float)
     if origin.shape!=(3,) or not np.isfinite(origin).all(): raise ValueError('Invalid legacy origin metadata.')
-    positions=raw['position'].astype('float64')
     if report.get('stored_axes')=='RUB':
+        if 'source_axes' not in report: raise ValueError('Legacy .splat sidecar with stored_axes="RUB" must specify source_axes.')
         from formats.legacy_splat import axis_matrix
         from scipy.spatial.transform import Rotation
         transform=axis_matrix(report['source_axes'])
@@ -88,8 +97,8 @@ def read_splat(path):
         matrices=Rotation.from_quat(q[:,[1,2,3,0]]).as_matrix()
         q=Rotation.from_matrix(transform.T[None]@matrices).as_quat()[:,[3,0,1,2]]
     metadata={'schema_version':1,'mode':'imported legacy .splat','source':{'source':fingerprint(path),'format':'legacy .splat'},'coordinate_frame':'restored source coordinates' if report else 'legacy file coordinates; axes/units unspecified','source_axes':report.get('source_axes','unspecified'),
-              'warnings':['Decoded Gaussian centres/scales are visualization data, not recovered LiDAR measurements.'],'crs':report.get('source',{}).get('crs')}
-    return GaussianScene(positions+origin,raw['rgba'][:,:3].astype('float32')/255,np.log(raw['scale']).copy(),q.astype('float32'),logit(np.clip(raw['rgba'][:,3].astype('float64')/255,1e-12,1-1e-12)).astype('float32'),metadata).validate()
+              'warnings':['Decoded Gaussian centres/scales are visualization data, not recovered LiDAR measurements.'],'crs':(report.get('source') or {}).get('crs')}
+    return GaussianScene(positions+origin,colors,log_scales,q.astype('float32'),opacities,metadata).validate()
 
 
 def load_splats(path):

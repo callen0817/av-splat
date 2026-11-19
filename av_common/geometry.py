@@ -16,9 +16,9 @@ class VoxelCloud:
 
 def voxelize(points,folder,size=.05,max_voxels=200_000,cancel=lambda:False,progress=lambda message:None,chunk_size=100_000):
     if not np.isfinite(size) or size<=0 or max_voxels<10: raise ValueError('Positive voxel size and at least ten solver voxels are required.')
+    inverse=allocate(folder,'voxel_index',(len(points),),'int32')
     for attempt in range(12):
         lookup={}; reps=[]; keys=[]; over_budget=False
-        inverse=allocate(folder,'voxel_index',(len(points),),'int32')
         for start in range(0,len(points),chunk_size):
             check_cancel(cancel)
             part=np.asarray(points[start:start+chunk_size])
@@ -27,8 +27,8 @@ def voxelize(points,folder,size=.05,max_voxels=200_000,cancel=lambda:False,progr
                 raise ValueError('Coordinates exceed stable voxel-index range; use an explicit local frame.')
             unique,first,back=np.unique(scaled.astype('int64'),axis=0,return_index=True,return_inverse=True)
             ids=np.empty(len(unique),dtype='int32')
-            for i,key in enumerate(unique):
-                key=tuple(key)
+            for i,row in enumerate(unique.tolist()):
+                key=tuple(row)
                 if key not in lookup:
                     if len(lookup)>=max_voxels: over_budget=True; break
                     lookup[key]=len(lookup); keys.append(key); reps.append(start+int(first[i]))

@@ -8,14 +8,20 @@ from av_common.data import atomic_json,fingerprint,check_cancel
 
 def run_queue(manifest_path,state_path,processor,cancel=lambda:False,progress=lambda message:None):
     manifest_path=Path(manifest_path).resolve(); state_path=Path(state_path).resolve()
-    manifest=json.loads(manifest_path.read_text())
+    base=manifest_path.parent
+    manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
     if manifest.get('schema_version')!=1 or not isinstance(manifest.get('jobs'),list): raise ValueError('Expected batch schema_version 1 and jobs array.')
     jobs=[]; identifiers=set(); inputs=set(); outputs=set()
     for item in manifest['jobs']:
         identifier=str(item['id'])
         if not identifier or identifier in identifiers: raise ValueError('Batch job IDs must be unique.')
         identifiers.add(identifier)
-        source=(manifest_path.parent/item['input']).resolve(); output=(manifest_path.parent/item['output']).resolve()
+        raw_input=Path(item['input']); raw_output=Path(item['output'])
+        if raw_input.is_absolute() or raw_output.is_absolute():
+            raise ValueError('Batch manifest paths must be relative to the manifest directory.')
+        source=(base/raw_input).resolve(); output=(base/raw_output).resolve()
+        if not source.is_relative_to(base) or not output.is_relative_to(base):
+            raise ValueError('Batch manifest paths must not escape the manifest directory.')
         if output in outputs: raise ValueError('Batch jobs must not share an output filename.')
         inputs.add(source); outputs.add(output); jobs.append((identifier,source,output,item.get('config',{})))
     if manifest_path in outputs or inputs.intersection(outputs) or state_path in inputs or state_path in outputs or state_path==manifest_path:
@@ -23,7 +29,7 @@ def run_queue(manifest_path,state_path,processor,cancel=lambda:False,progress=la
     for source in inputs:
         for output in outputs:
             if source.exists() and output.exists() and os.path.samefile(source,output): raise ValueError('A batch output is a hard link to input data.')
-    journal=json.loads(state_path.read_text()) if state_path.exists() else {'schema_version':1,'jobs':{}}
+    journal=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'schema_version':1,'jobs':{}}
     if journal.get('schema_version')!=1 or not isinstance(journal.get('jobs'),dict): raise ValueError('Invalid batch journal.')
     outcomes=[]
     for identifier,source,output,config in jobs:

@@ -76,7 +76,8 @@ def _load_ply(path,folder,cancel):
             if b'format ascii' in stream.read(256):
                 raise ValueError('Convert large ASCII PLY to binary PLY or LAS for bounded-memory import.')
     ply=PlyData.read(path,mmap='r')
-    vertex=ply['vertex'].data
+    try: vertex=ply['vertex'].data
+    except KeyError as error: raise ValueError('PLY must contain a vertex element.') from error
     if not all(k in vertex.dtype.names for k in ['x','y','z']): raise ValueError('PLY must contain x, y and z vertex fields.')
     if not len(vertex): raise ValueError('PLY has no vertices.')
     if any(vertex.dtype[k].kind=='O' for k in vertex.dtype.names): raise ValueError('List-valued vertex attributes are not supported.')
@@ -132,8 +133,11 @@ def _load_xyz(path,folder,cancel):
     metadata={'format':'XYZRGB' if colors is not None else 'XYZ','units':'source units; confirm metres before geometry processing','crs':None}
     sidecar=Path(str(path)+'.av.json')
     if sidecar.exists() and sidecar.stat().st_size<16*1024**2:
-        record=json.loads(sidecar.read_text())
-        if record.get('count')==count:
+        try:
+            record=json.loads(sidecar.read_text(encoding='utf-8'))
+        except (OSError,UnicodeDecodeError,json.JSONDecodeError):
+            record=None
+        if isinstance(record,dict) and record.get('count')==count:
             for key in ['crs','coordinate_frame','not_original_survey','units']:
                 if key in record: metadata[key]=record[key]
     return Dataset(points,colors,{},metadata)
@@ -145,9 +149,10 @@ def _load_las(path,folder,cancel,progress):
         count=reader.header.point_count
         if count==0: raise ValueError('LAS contains no points.')
         points=allocate(folder,'points',(count,3))
-        has_color='red' in set(reader.header.point_format.dimension_names)
+        dims=set(reader.header.point_format.dimension_names)
+        has_color={'red','green','blue'}.issubset(dims)
         colors=allocate(folder,'colors',(count,3),'float32') if has_color else None
-        intensity=allocate(folder,'intensity',(count,),'uint16')
+        intensity=allocate(folder,'attr_intensity',(count,),'uint16')
         offset=0
         for chunk in reader.chunk_iterator(200_000):
             check_cancel(cancel); end=offset+len(chunk)
@@ -174,27 +179,28 @@ def _load_e57(path,folder,cancel):
             process.terminate()
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.kill(); process.wait()
-    metadata=json.loads((folder/'e57.json').read_text())
+    metadata=json.loads((folder/'e57.json').read_text(encoding='utf-8'))
     n=metadata['count']
-    points=np.load(folder/'points.npy',mmap_mode='r+')[:n]
-    colors=np.load(folder/'colors.npy',mmap_mode='r+')[:n] if metadata['has_colors'] else None
-    extras={'intensity':np.load(folder/'intensity.npy',mmap_mode='r+')[:n]}
+    points=np.load(folder/'points.npy',mmap_mode='r')[:n]
+    colors=np.load(folder/'colors.npy',mmap_mode='r')[:n] if metadata['has_colors'] else None
+    intensity_file=folder/'attr_intensity.npy' if (folder/'attr_intensity.npy').exists() else folder/'intensity.npy'
+    extras={'intensity':np.load(intensity_file,mmap_mode='r')[:n]}
     return Dataset(points,colors,extras,metadata)
 
 
 def _load_dataset_unlocked(path,cache_root,cancel=lambda:False,progress=lambda message:None):
     path=Path(path).resolve(); stamp=fingerprint(path)
     key=hashlib.sha256(json.dumps({'cache_schema_version':1,'source':stamp},sort_keys=True).encode()).hexdigest()[:24]
-    folder=Path(cache_root)/key
+    folder=(Path(cache_root)/key).resolve()
     folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'ready.json'
     # Complete retained imports can be reused without reparsing the source.
     if marker.exists():
-        metadata=json.loads(marker.read_text()); n=metadata['count']
-        points=np.load(folder/'points.npy',mmap_mode='r+')[:n]
-        colors=np.load(folder/'colors.npy',mmap_mode='r+')[:n] if metadata['has_colors'] else None
+        metadata=json.loads(marker.read_text(encoding='utf-8')); n=metadata['count']
+        points=np.load(folder/'points.npy',mmap_mode='r')[:n]
+        colors=np.load(folder/'colors.npy',mmap_mode='r')[:n] if metadata['has_colors'] else None
         extras={}
-        for name in metadata.get('cached_extras',[]): extras[name]=np.load(folder/('attr_'+name+'.npy'),mmap_mode='r+')[:n]
+        for name in metadata.get('cached_extras',[]): extras[name]=np.load(folder/('attr_'+name+'.npy'),mmap_mode='r')[:n]
         return Dataset(points,colors,extras,metadata).validate()
     extension=path.suffix.lower()
     if extension=='.ply': data=_load_ply(path,folder,cancel)
@@ -207,7 +213,11 @@ def _load_dataset_unlocked(path,cache_root,cancel=lambda:False,progress=lambda m
     # Cache all scalar attributes, including custom PLY fields.
     for name,values in list(data.extras.items()):
         if not name.replace('_','').isalnum(): raise ValueError('Unsupported attribute name.')
-        output=folder/('attr_'+name+'.npy')
+        output=(folder/('attr_'+name+'.npy')).resolve()
+        source_file=getattr(values,'filename',None)
+        if source_file is not None and Path(source_file).resolve()==output:
+            if hasattr(values,'flush') and values.flags.writeable: values.flush()
+            continue
         # A missing ready marker means every attribute must be rewritten;
         # an existing attribute file may belong to an interrupted prior import.
         cached=allocate(folder,'attr_'+name,(len(data.points),),values.dtype)
@@ -216,7 +226,7 @@ def _load_dataset_unlocked(path,cache_root,cancel=lambda:False,progress=lambda m
         cached.flush(); data.extras[name]=cached
     data.metadata.update(cache_schema_version=1,source=stamp,count=len(data.points),has_colors=data.colors is not None,cached_extras=list(data.extras))
     for array in [data.points,data.colors,*data.extras.values()]:
-        if hasattr(array,'flush'): array.flush()
+        if hasattr(array,'flush') and array.flags.writeable: array.flush()
     atomic_json(marker,data.metadata)
     return data
 
